@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title></title>
+  <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside id="sidebar">
+      <h1 id="app-title"></h1>
+      <div id="new-chat"></div>
+      <ul id="conversations"></ul>
+    </aside>
+    <div class="chat">
+      <header class="topbar">
+        <button type="button" id="sidebar-toggle"></button>
+        <h2 id="conversation-title"></h2>
+        <div id="model-picker"></div>
+      </header>
+      <div id="thread" tabindex="0">
+        <div id="empty">
+          <p id="greeting"></p>
+          <div id="examples"></div>
+        </div>
+        <p id="trimmed" class="notice" role="status" hidden></p>
+        <div id="error" hidden>
+          <p id="error-text" role="status"></p>
+          <button type="button" id="retry"></button>
+        </div>
+        <button type="button" id="jump" hidden></button>
+      </div>
+      <form id="composer">
+        <div id="attachment" class="chip" hidden></div>
+        <button type="button" id="attach" hidden></button>
+        <input id="file-input" type="file" hidden>
+        <div class="composer-row">
+          <label id="message-label" class="visually-hidden" for="message"></label>
+          <textarea id="message" rows="1"></textarea>
+          <button type="submit" id="send"></button>
+        </div>
+        <p id="footer"></p>
+      </form>
+    </div>
+  </div>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
