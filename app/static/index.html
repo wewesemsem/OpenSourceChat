@@ -13,13 +13,33 @@
       <h1 id="app-title"></h1>
       <div id="new-chat"></div>
       <ul id="conversations"></ul>
+      <div id="customize">
+        <p id="customize-label"></p>
+        <div id="customize-slot"></div>
+      </div>
     </aside>
     <div class="chat">
       <header class="topbar">
         <button type="button" id="sidebar-toggle"></button>
         <h2 id="conversation-title"></h2>
         <div id="model-picker"></div>
+        <p id="tools-note" class="notice" hidden></p>
       </header>
+      <section id="mcp-panel" hidden>
+        <div class="mcp-page">
+          <div class="mcp-heading">
+            <h2 id="mcp-title"></h2>
+            <div id="mcp-add"></div>
+          </div>
+          <p id="mcp-intro"></p>
+          <p id="mcp-form-error" class="notice" role="status" hidden></p>
+          <h3 id="mcp-connectors-title" class="mcp-section"></h3>
+          <ul id="mcp-connector-list"></ul>
+          <form id="mcp-form" hidden></form>
+          <p id="mcp-empty" hidden></p>
+          <ul id="mcp-list"></ul>
+        </div>
+      </section>
       <div id="thread" tabindex="0">
         <div id="empty">
           <p id="greeting"></p>
@@ -34,7 +54,12 @@
       </div>
       <form id="composer">
         <div id="attachment" class="chip" hidden></div>
-        <button type="button" id="attach" hidden></button>
+        <div class="composer-tools">
+          <button type="button" id="attach" hidden></button>
+          <button type="button" id="index-folder" hidden></button>
+        </div>
+        <p id="index-chosen" class="notice" hidden></p>
+        <p id="index-status" class="notice" role="status" hidden></p>
         <input id="file-input" type="file" hidden>
         <div class="composer-row">
           <label id="message-label" class="visually-hidden" for="message"></label>

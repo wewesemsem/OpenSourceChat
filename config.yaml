@@ -42,11 +42,17 @@ security:
 # Fixed until the system-prompt editor exists. Each new conversation copies it.
 system_prompt: >
   You are a helpful assistant running on this computer.
-  Answer directly and keep replies focused.
+  Answer directly. Keep replies short unless the user asks for more.
 
-# Each turn sends the system prompt plus the newest history that fits in
-# context_size - reserved_output_tokens. Older turns are left out.
+# Each turn sends the system prompt plus history that still fits in
+# context_size - reserved_output_tokens. When the window is full, several
+# old turns are dropped together so the start of the prompt can stay cached.
 default_model: gemma3:12b
+
+# Ollama unloads a model after 5 minutes of silence. 30m skips that cold start
+# on the next reply. -1 keeps the model loaded until Ollama quits, which holds
+# the memory the whole time.
+keep_alive: 30m
 
 data_dir: data
 
@@ -59,8 +65,9 @@ ui:
     - Show a Python function that reverses a string.
     - What is the difference between a list and a tuple?
 
-# Read-only local files. Empty allowed_folders turns off the in-app folder list.
+# Read-only local files for the attach browser. Empty allowed_folders turns that list off.
 # allow_upload opens the system file window instead. The page never sends a path.
+# Select Folder does not use allowed_folders.
 files:
   allowed_folders: []
   allow_upload: true
@@ -98,7 +105,29 @@ files:
     - id_dsa
     - id_ecdsa
     - id_ed25519
-    - "*.kdbx"
+    -   "*.kdbx"
+
+# Select Folder in the app indexes the folder you pick. This flag only gates the command-line indexer.
+# Chat does not search the index until that is built. With the flag false, the command indexes nothing.
+# Keyword search uses SQLite. It does not call a model.
+# min_score is the positive BM25 magnitude, not a 0–1 similarity. 0 keeps every match.
+# index_throttle is seconds to pause after each file that is actually read. 0 does not pause.
+# CSV rows are indexed with the header repeated, and they search less reliably than prose.
+index:
+  enabled: false
+  retrieval_mode: keyword
+  chunk_tokens: 400
+  chunk_overlap_tokens: 40
+  top_k: 4
+  min_score: 0
+  max_files: 2000
+  max_total_size_mb: 200
+  max_chunks_per_folder: 20000
+  max_context_tokens_share: 0.25
+  index_throttle: 0
+  pause_indexing_during_chat: true
+  followup_query_mode: heuristic
+  embedding_model: null
 
 models:
   - name: gemma3:12b
@@ -113,3 +142,204 @@ models:
     context_size: 8192
     reserved_output_tokens: 1024
     temperature: 0.7
+  # Smaller context and a shorter reply cap. This is the fast option in the picker.
+  - name: gemma3:4b
+    label: Gemma 3 4B (fast)
+    base_url: http://127.0.0.1:11434/v1
+    context_size: 4096
+    reserved_output_tokens: 512
+    temperature: 0.7
+    fast: true
+
+# Tools stay off until a server is enabled. The company entry is a placeholder:
+# transport, URL, token variable, and allowlist are not confirmed yet.
+# Secrets are never written here. token_env is the name of an environment variable.
+mcp:
+  max_steps: 3
+  connect_timeout_seconds: 10
+  read_timeout_seconds: 60
+  model_probe_timeout_seconds: 5
+  allowed_hosts:
+    - 127.0.0.1
+    - localhost
+    - ::1
+    - mcp.atlassian.com
+    - workiq.svc.cloud.microsoft
+  oauth_timeout_seconds: 180
+  # Official remote servers. They stay off until someone connects them in Customize.
+  # Atlassian signs in with its own OAuth. Microsoft 365 uses an Entra app registration:
+  # set MCP_MICROSOFT365_CLIENT_ID and MCP_MICROSOFT365_CLIENT_SECRET, never the values here.
+  connectors:
+    - id: atlassian
+      transport: streamable_http
+      url: https://mcp.atlassian.com/v2/mcp
+      title_key: mcp_atlassian
+      summary_key: mcp_atlassian_summary
+      service_keys:
+        - mcp_jira
+        - mcp_confluence
+    - id: microsoft365
+      transport: streamable_http
+      url: https://workiq.svc.cloud.microsoft/mcp
+      title_key: mcp_microsoft365
+      summary_key: mcp_microsoft365_summary
+      service_keys:
+        - mcp_outlook
+        - mcp_teams
+        - mcp_sharepoint
+        - mcp_onedrive
+      scope: api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+      client_id_env: MCP_MICROSOFT365_CLIENT_ID
+      client_secret_env: MCP_MICROSOFT365_CLIENT_SECRET
+  servers:
+    - name: company
+      # Placeholder. Believed to be legacy HTTP+SSE. Change this after confirming.
+      transport: sse
+      url: ""
+      auth:
+        type: bearer
+        token_env: MCP_COMPANY_TOKEN
+      enabled: false
+      allowed_tools: []
+    # Local read-only stand-in so the spike can measure tool calling.
+    # It does not run unless a command selects it. The app leaves it disabled.
+    - name: spike
+      transport: stdio
+      command: python
+      args:
+        - -m
+        - app.mcp.spike_server
+      cwd: .
+      env: []
+      auth:
+        type: none
+      enabled: false
+      allowed_tools:
+        - office_lookup
+  spike:
+    output: data/mcp-spike.json
+    system_prompt: >
+      You answer questions about one office. Call the office_lookup tool
+      once, with the topic id that matches the question. When the tool
+      returns, reply with that fact and no other text.
+    prompts:
+      - id: reception-phone
+        text: What phone number does reception use?
+        tool: office_lookup
+        arguments:
+          topic: reception_phone
+        expect: "555-0148"
+      - id: weekday-hours
+        text: What are the weekday office hours?
+        tool: office_lookup
+        arguments:
+          topic: weekday_hours
+        expect: "09:00-17:30"
+      - id: weekend-hours
+        text: Is the office open on weekends?
+        tool: office_lookup
+        arguments:
+          topic: weekend_hours
+        expect: "closed"
+      - id: mailing-address
+        text: What is the office mailing address?
+        tool: office_lookup
+        arguments:
+          topic: mailing_address
+        expect: "400 Market Street, Suite 12"
+      - id: visitor-parking
+        text: Where do visitors park?
+        tool: office_lookup
+        arguments:
+          topic: visitor_parking
+        expect: "Lot C"
+      - id: lunch-floor
+        text: Which floor is the lunch room on?
+        tool: office_lookup
+        arguments:
+          topic: lunch_floor
+        expect: "2"
+      - id: room-booking
+        text: What code books a conference room?
+        tool: office_lookup
+        arguments:
+          topic: room_booking_code
+        expect: "BOOK-17"
+      - id: help-desk
+        text: What is the IT help desk extension?
+        tool: office_lookup
+        arguments:
+          topic: help_desk_extension
+        expect: "4400"
+      - id: shipping-cutoff
+        text: What time is the shipping cutoff?
+        tool: office_lookup
+        arguments:
+          topic: shipping_cutoff
+        expect: "15:00"
+      - id: holiday-closure
+        text: When is the office closed for the holiday?
+        tool: office_lookup
+        arguments:
+          topic: holiday_closure
+        expect: "December 25"
+      - id: badge-office
+        text: Where are visitor badges issued?
+        tool: office_lookup
+        arguments:
+          topic: badge_office
+        expect: "Lobby desk"
+      - id: guest-wifi
+        text: What is the guest wifi network name?
+        tool: office_lookup
+        arguments:
+          topic: guest_wifi
+        expect: "North-Guest"
+      - id: assembly-point
+        text: Where is the emergency assembly point?
+        tool: office_lookup
+        arguments:
+          topic: assembly_point
+        expect: "West courtyard"
+      - id: floor-printer
+        text: What is the name of the printer on floor 3?
+        tool: office_lookup
+        arguments:
+          topic: floor3_printer
+        expect: "HP-3-East"
+      - id: office-timezone
+        text: What time zone is the office in?
+        tool: office_lookup
+        arguments:
+          topic: office_timezone
+        expect: "America/New_York"
+      - id: expense-due
+        text: Which day are expense reports due?
+        tool: office_lookup
+        arguments:
+          topic: expense_due_day
+        expect: "Friday"
+      - id: transit-stop
+        text: What is the nearest transit stop?
+        tool: office_lookup
+        arguments:
+          topic: transit_stop
+        expect: "Market Street station"
+      - id: package-room
+        text: When is the package room open?
+        tool: office_lookup
+        arguments:
+          topic: package_room_hours
+        expect: "10:00-16:00"
+      - id: facilities-email
+        text: What is the facilities email address?
+        tool: office_lookup
+        arguments:
+          topic: facilities_email
+        expect: "facilities@example.com"
+      - id: entry-door
+        text: Which door do employees use to enter the building?
+        tool: office_lookup
+        arguments:
+          topic: entry_door
+        expect: "Door A"

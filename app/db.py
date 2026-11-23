@@ -9,6 +9,48 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 _db_path: Path | None = None
+DATABASE_NAME = "chat.sqlite"
+
+# New tables only. Existing conversation tables are not altered.
+INDEX_SCHEMA = """
+CREATE TABLE IF NOT EXISTS indexed_folders (
+    id TEXT PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS indexed_files (
+    id TEXT PRIMARY KEY,
+    folder_id TEXT NOT NULL REFERENCES indexed_folders(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mtime INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT,
+    UNIQUE (folder_id, path)
+);
+CREATE INDEX IF NOT EXISTS indexed_files_by_folder
+    ON indexed_files (folder_id);
+CREATE TABLE IF NOT EXISTS chunks (
+    id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL REFERENCES indexed_files(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    token_count INTEGER NOT NULL,
+    metadata_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chunks_by_file
+    ON chunks (file_id, ordinal);
+"""
+FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    chunk_id UNINDEXED,
+    text,
+    tokenize = 'porter unicode61'
+)
+"""
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -27,6 +69,8 @@ CREATE TABLE IF NOT EXISTS messages (
     tokens_in INTEGER,
     tokens_out INTEGER,
     latency_ms INTEGER,
+    ttft_ms INTEGER,
+    tokens_per_second REAL,
     sources_json TEXT,
     created_at TEXT NOT NULL
 );
@@ -56,6 +100,8 @@ def configure(path: Path) -> None:
     with connection() as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
+        _ensure_message_timings(conn)
+        _ensure_index_tables(conn)
 
 
 def db_path() -> Path:
@@ -77,6 +123,41 @@ def connection():
         raise
     finally:
         conn.close()
+
+
+def _ensure_index_tables(conn: sqlite3.Connection) -> None:
+    """Add the folder index. Chat tables are left as they are.
+
+    FTS5 is optional at startup so a build without it can still open chats.
+    Indexing itself stops when the virtual table is missing.
+    """
+    conn.executescript(INDEX_SCHEMA)
+    if not _fts5_compiled(conn):
+        return
+    conn.execute(FTS_SCHEMA)
+
+
+def fts5_available() -> bool:
+    with connection() as conn:
+        if not _fts5_compiled(conn):
+            return False
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'chunks_fts'"
+        ).fetchone()
+    return row is not None
+
+
+def _fts5_compiled(conn: sqlite3.Connection) -> bool:
+    return any("ENABLE_FTS5" in row[0] for row in conn.execute("PRAGMA compile_options"))
+
+
+def _ensure_message_timings(conn: sqlite3.Connection) -> None:
+    """Add timing columns when an older database is opened."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
+    if "ttft_ms" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN ttft_ms INTEGER")
+    if "tokens_per_second" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN tokens_per_second REAL")
 
 
 def now() -> str:
@@ -157,7 +238,7 @@ def list_messages(conversation_id: str) -> list[dict]:
         rows = conn.execute(
             """
             SELECT id, conversation_id, role, content, model, tokens_in, tokens_out,
-                   latency_ms, created_at
+                   latency_ms, ttft_ms, tokens_per_second, created_at
             FROM messages
             WHERE conversation_id = ?
             ORDER BY created_at, rowid
@@ -174,6 +255,10 @@ def add_message(
     content: str,
     model: str | None,
     latency_ms: int | None = None,
+    ttft_ms: int | None = None,
+    tokens_per_second: float | None = None,
+    tokens_in: int | None = None,
+    tokens_out: int | None = None,
 ) -> dict:
     message_id = str(uuid.uuid4())
     stamp = now()
@@ -181,10 +266,23 @@ def add_message(
         conn.execute(
             """
             INSERT INTO messages (
-                id, conversation_id, role, content, model, latency_ms, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                id, conversation_id, role, content, model, tokens_in, tokens_out,
+                latency_ms, ttft_ms, tokens_per_second, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (message_id, conversation_id, role, content, model, latency_ms, stamp),
+            (
+                message_id,
+                conversation_id,
+                role,
+                content,
+                model,
+                tokens_in,
+                tokens_out,
+                latency_ms,
+                ttft_ms,
+                tokens_per_second,
+                stamp,
+            ),
         )
         conn.execute(
             "UPDATE conversations SET updated_at = ? WHERE id = ?",

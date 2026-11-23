@@ -1,0 +1,16 @@
+{
+  "folder": "/REPLACE/with/absolute/allowlisted/folder",
+  "output": "data/index-eval.json",
+  "questions": [
+    {
+      "id": "placeholder-1",
+      "question": "REPLACE: a question answered by one file",
+      "expect": ["REPLACE-source.md"]
+    },
+    {
+      "id": "placeholder-2",
+      "question": "REPLACE: a question that could match either file",
+      "expect": ["REPLACE-a.txt", "REPLACE-b.md"]
+    }
+  ]
+}

@@ -5,9 +5,11 @@ reply. Slots are charged in order:
 
     system_prompt | pinned_notes | retrieved_context | history
 
-History receives whatever remains. The oldest turns are dropped first.
-The system prompt is never dropped. Retrieved file text is its own user
-message, not part of the system prompt.
+History receives whatever remains. When it no longer fits, the oldest
+turns are dropped in chunks of HISTORY_CHUNK. Dropping one turn at a time
+would change the start of the prompt on every turn, and Ollama would have
+to read the whole prompt again. The system prompt is never dropped.
+Retrieved file text is its own user message, not part of the system prompt.
 
 Tokens are estimated at about four characters each. Llama and Gemma use
 different tokenizers, and a tokenizer package would match only one of
@@ -20,6 +22,8 @@ from dataclasses import dataclass
 
 # Role markers around a message. Charged so the window stays under the budget.
 MESSAGE_OVERHEAD = 4
+# Oldest turns removed together once the transcript no longer fits.
+HISTORY_CHUNK = 4
 
 
 @dataclass(frozen=True)
@@ -133,27 +137,34 @@ def _fit_history(
     turns: list[list[dict[str, str]]],
     remaining: int,
 ) -> tuple[list[list[dict[str, str]]], bool]:
-    """Keep a suffix of turns. Truncate only when the newest turn alone is too big."""
-    kept: list[list[dict[str, str]]] = []
-    used = 0
-    skipped = 0
-    for turn in reversed(turns):
-        cost = sum(message_tokens(item["content"]) for item in turn)
-        if used + cost <= remaining:
-            kept.append(turn)
-            used += cost
-            continue
-        skipped = len(turns) - len(kept)
-        break
-    else:
-        skipped = 0
-    kept.reverse()
-    if kept:
-        return kept, skipped > 0
+    """Keep a suffix of turns. Drop oldest turns in chunks when over budget.
+
+    Truncate only when the newest turn alone is too big.
+    """
+    if _history_cost(turns) <= remaining:
+        return turns, False
+
+    drop = 0
+    while drop < len(turns) and _history_cost(turns[drop:]) > remaining:
+        drop += 1
+    if drop < len(turns):
+        return turns[_chunk_drop(drop, len(turns) - 1) :], True
 
     fitted = _fit_turn(turns[-1], remaining)
     changed = fitted != turns[-1]
-    return ([fitted] if fitted else []), skipped > 0 or changed or not fitted
+    return ([fitted] if fitted else []), changed or not fitted or len(turns) > 1
+
+
+def _chunk_drop(needed: int, limit: int) -> int:
+    """Round a drop up to HISTORY_CHUNK without dropping the newest turn."""
+    if needed <= 0:
+        return 0
+    rounded = ((needed + HISTORY_CHUNK - 1) // HISTORY_CHUNK) * HISTORY_CHUNK
+    return min(rounded, limit)
+
+
+def _history_cost(turns: list[list[dict[str, str]]]) -> int:
+    return sum(message_tokens(item["content"]) for turn in turns for item in turn)
 
 
 def _fit_turn(turn: list[dict[str, str]], remaining: int) -> list[dict[str, str]]:

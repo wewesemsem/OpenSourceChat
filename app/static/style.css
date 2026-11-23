@@ -61,10 +61,38 @@ input:focus-visible {
   margin: 0;
   padding: 0;
   overflow: auto;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
+
+#customize {
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#customize-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#customize button.text {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+}
+
+#customize button.text[aria-current="page"] { background: var(--selected); }
 
 .conversation {
   display: flex;
@@ -113,6 +141,13 @@ input:focus-visible {
   gap: var(--space-sm);
   padding: var(--space-sm) var(--space);
   border-bottom: 1px solid var(--line);
+}
+
+#tools-note {
+  flex-basis: 100%;
+  margin: 0;
+  border: 0;
+  padding: 0;
 }
 
 #sidebar-toggle {
@@ -320,7 +355,24 @@ input:focus-visible {
   align-items: end;
 }
 
-#attach { justify-self: start; }
+.composer-tools { display: flex; gap: var(--space-sm); }
+
+.folder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.15rem 0.75rem;
+  align-items: center;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.folder-detail {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+#index-chosen, #index-status { white-space: pre-line; overflow-wrap: anywhere; }
 
 .chip {
   display: flex;
@@ -390,6 +442,106 @@ textarea:focus-visible { border-color: var(--focus); }
 .dialog p { margin: 0 0 var(--space); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-sm); }
 .dialog-actions .text { background: transparent; color: var(--ink); border-color: var(--line); }
+
+#mcp-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space);
+}
+
+.mcp-page { width: min(100%, var(--thread)); margin-inline: auto; }
+
+.mcp-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.mcp-heading h2 { margin: 0; font-size: 1.15rem; }
+
+#mcp-intro { margin: 0 0 var(--space); color: var(--muted); }
+
+.mcp-section {
+  margin: var(--space) 0 var(--space-sm);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#mcp-connector-list,
+#mcp-list { list-style: none; margin: 0; padding: 0; }
+
+.mcp-setup {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+a.mcp-sign-in {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.75rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.mcp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.mcp-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mcp-name strong { font-weight: 600; }
+.mcp-status { color: var(--muted); font-size: 0.85rem; }
+
+.mcp-row .text { background: transparent; color: var(--ink); border-color: var(--line); }
+
+.switch {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.switch[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+#mcp-form {
+  display: grid;
+  gap: var(--space-sm);
+  margin-bottom: var(--space);
+  padding: var(--space);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+#mcp-form label { display: grid; gap: 4px; color: var(--muted); font-size: 0.85rem; }
+
+#mcp-form input,
+#mcp-form select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.75rem;
+}
+
+#mcp-form .dialog-actions { margin-top: var(--space-sm); }
 
 .visually-hidden {
   position: absolute;

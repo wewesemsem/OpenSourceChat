@@ -1,4 +1,5 @@
 import { button, createDropdown, openDialog, textInput } from "./components.js";
+import { mountMcp } from "./mcp.js";
 import { renderMarkdown } from "./markdown.js";
 
 const sidebar = document.querySelector("#sidebar");
@@ -7,6 +8,7 @@ const appTitle = document.querySelector("#app-title");
 const newChatSlot = document.querySelector("#new-chat");
 const titleEl = document.querySelector("#conversation-title");
 const pickerSlot = document.querySelector("#model-picker");
+const toolsNote = document.querySelector("#tools-note");
 const thread = document.querySelector("#thread");
 const empty = document.querySelector("#empty");
 const greeting = document.querySelector("#greeting");
@@ -19,12 +21,17 @@ const jump = document.querySelector("#jump");
 const form = document.querySelector("#composer");
 const attachmentBox = document.querySelector("#attachment");
 const attachButton = document.querySelector("#attach");
+const indexButton = document.querySelector("#index-folder");
+const indexChosen = document.querySelector("#index-chosen");
+const indexStatus = document.querySelector("#index-status");
 const fileInput = document.querySelector("#file-input");
 const input = document.querySelector("#message");
 const sendButton = document.querySelector("#send");
 const messageLabel = document.querySelector("#message-label");
 const footer = document.querySelector("#footer");
 const toggle = document.querySelector("#sidebar-toggle");
+const customizeSlot = document.querySelector("#customize-slot");
+const mcpPanel = document.querySelector("#mcp-panel");
 
 const state = {
   meta: null,
@@ -39,6 +46,7 @@ const state = {
   dialog: null,
   picker: null,
   attachment: null,
+  mcp: null,
 };
 
 function t(key) {
@@ -76,6 +84,32 @@ function formatLatency(ms) {
   return `${(ms / 1000).toFixed(1)} ${t("seconds")}`;
 }
 
+function formatRate(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  return number >= 10 ? String(Math.round(number)) : number.toFixed(1);
+}
+
+function formatTiming(message) {
+  const parts = [];
+  if (message.ttft_ms != null) parts.push(`${t("first_token")} ${formatLatency(message.ttft_ms)}`);
+  if (message.tokens_per_second != null) {
+    const rate = formatRate(message.tokens_per_second);
+    if (rate) parts.push(`${rate} ${t("tokens_per_second")}`);
+  }
+  if (!parts.length && message.latency_ms != null) parts.push(formatLatency(message.latency_ms));
+  return parts.join(" · ");
+}
+
+function warmModel(name) {
+  if (!name) return;
+  fetch(url("/api/models/warmup"), {
+    method: "POST",
+    headers: apiHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ model: name }),
+  }).catch(() => {});
+}
+
 async function load() {
   const response = await fetch("/api/meta", { headers: apiHeaders() });
   state.meta = await response.json();
@@ -91,11 +125,15 @@ async function load() {
   sendButton.textContent = t("send");
   attachButton.textContent = t("attach");
   attachButton.hidden = !state.meta.files_enabled;
+  indexButton.textContent = t("index_select");
+  indexButton.hidden = false;
+  await restoreSelection();
   conversations.setAttribute("aria-label", t("conversations_label"));
   thread.setAttribute("aria-label", t("thread_label"));
   buildChrome();
   state.model = state.meta.default_model;
   await refreshModels();
+  warmModel(state.model);
   await refreshConversations();
   const requested = location.hash.replace("#", "");
   if (requested && state.conversations.some((item) => item.id === requested)) {
@@ -126,6 +164,7 @@ function buildChrome() {
     }
     openPicker(null);
   });
+  indexButton.addEventListener("click", () => selectFolder());
   toggle.addEventListener("click", () => setSidebar(sidebar.classList.contains("collapsed")));
   setSidebar(!window.matchMedia("(max-width: 720px)").matches);
   state.picker = createDropdown({
@@ -134,10 +173,35 @@ function buildChrome() {
     onSelect: (name) => {
       state.model = name;
       state.picker.setOptions(state.models, state.model);
+      showToolNote();
+      warmModel(name);
     },
     onOpen: () => refreshModels(),
   });
   pickerSlot.replaceChildren(state.picker.root);
+  state.mcp = mountMcp({
+    slot: customizeSlot,
+    panel: mcpPanel,
+    thread,
+    composer: form,
+    titleEl,
+    t,
+    url,
+    headers: apiHeaders,
+    openDialog: (options) => {
+      state.dialog?.close();
+      state.dialog = openDialog({ ...options, onClose: () => { state.dialog = null; options.onClose?.(); } });
+    },
+    button,
+    onShow: () => {
+      if (window.matchMedia("(max-width: 720px)").matches) setSidebar(false);
+    },
+    onChange: async () => {
+      const response = await fetch(url("/api/meta"), { headers: apiHeaders() });
+      if (response.ok) state.meta = await response.json();
+      await refreshModels();
+    },
+  });
 }
 
 function setSidebar(open) {
@@ -160,6 +224,19 @@ async function refreshModels() {
     state.model = state.models[0]?.name || state.meta.default_model;
   }
   state.picker?.setOptions(state.models, state.model);
+  showToolNote();
+}
+
+function showToolNote() {
+  const current = state.models.find((item) => item.name === state.model);
+  const mode = current?.tools;
+  if (!state.meta?.tools_enabled || mode === "supported" || mode === "off" || !mode) {
+    toolsNote.hidden = true;
+    toolsNote.textContent = "";
+    return;
+  }
+  toolsNote.textContent = t(mode === "unknown" ? "tools_unknown" : "tools_unsupported");
+  toolsNote.hidden = false;
 }
 
 async function refreshConversations() {
@@ -169,6 +246,7 @@ async function refreshConversations() {
 }
 
 function showEmpty() {
+  state.mcp?.close();
   state.activeId = null;
   state.messages = [];
   history.replaceState(null, "", location.pathname);
@@ -184,6 +262,7 @@ function showEmpty() {
 
 async function openConversation(id) {
   if (state.sending) return;
+  state.mcp?.close();
   const response = await fetch(url(`/api/conversations/${id}`), { headers: apiHeaders() });
   if (!response.ok) {
     showEmpty();
@@ -323,8 +402,7 @@ function renderMessage(message, isLast) {
   if (message.role === "assistant") {
     const meta = document.createElement("p");
     meta.className = "meta";
-    const latency = formatLatency(message.latency_ms);
-    meta.textContent = [labelFor(message.model), latency].filter(Boolean).join(" · ");
+    meta.textContent = [labelFor(message.model), formatTiming(message)].filter(Boolean).join(" · ");
     article.append(meta);
     if (message.streaming) {
       const plain = document.createElement("div");
@@ -364,6 +442,12 @@ function paintStreaming(text) {
   node.classList.remove("pending");
   node.textContent = text;
   follow(false);
+}
+
+function paintStatus(text) {
+  const node = thread.querySelector(".message.streaming .plain.pending");
+  if (!node) return;
+  node.textContent = text;
 }
 
 function clearError() {
@@ -458,6 +542,7 @@ async function sendMessage(content, { regenerate = false } = {}) {
         if (user) user.id = payload.user_message_id;
       }
       if (payload.trimmed) trimmed.hidden = false;
+      if (payload.status === "loading") paintStatus(t("loading_model"));
       if (typeof payload.delta === "string" && payload.delta) {
         if (!assistant.content) assistant.content = "";
         assistant.content += payload.delta;
@@ -472,6 +557,8 @@ async function sendMessage(content, { regenerate = false } = {}) {
         assistant.streaming = false;
         assistant.id = payload.message_id;
         assistant.latency_ms = payload.latency_ms;
+        assistant.ttft_ms = payload.ttft_ms;
+        assistant.tokens_per_second = payload.tokens_per_second;
         assistant.model = payload.model || model;
       }
     });
@@ -757,6 +844,79 @@ fileInput.addEventListener("change", () => {
   const file = fileInput.files && fileInput.files[0];
   if (file) uploadAttachment(file);
 });
+
+let indexPoll = 0;
+let indexPicking = false;
+
+function showIndexPath(path) {
+  indexChosen.hidden = !path;
+  indexChosen.textContent = path ? fill(t("index_selected"), { path }) : "";
+}
+
+function showIndexStatus(text) {
+  indexStatus.hidden = !text;
+  indexStatus.textContent = text || "";
+}
+
+async function restoreSelection() {
+  const [selectionResponse, jobResponse] = await Promise.all([
+    fetch(url("/api/index/selection"), { headers: apiHeaders() }),
+    fetch(url("/api/index/job"), { headers: apiHeaders() }),
+  ]);
+  const selection = await selectionResponse.json().catch(() => ({}));
+  const job = await jobResponse.json().catch(() => ({}));
+  if (selection.path) showIndexPath(selection.path);
+  if (job.running) showIndexStatus(fill(t("index_running"), { name: job.name }));
+  else if (job.message) showIndexStatus(job.message);
+}
+
+async function selectFolder() {
+  if (indexPicking) return;
+  indexPicking = true;
+  indexButton.disabled = true;
+  showIndexStatus(t("index_opening"));
+  const response = await fetch(url("/api/index/pick"), { method: "POST", headers: apiHeaders() });
+  const payload = await response.json().catch(() => ({}));
+  indexButton.disabled = false;
+  indexPicking = false;
+  if (!response.ok) {
+    showIndexStatus(typeof payload.detail === "string" ? payload.detail : t("index_picker_unavailable"));
+    return;
+  }
+  if (payload.cancelled) {
+    showIndexStatus(t("index_cancelled"));
+    return;
+  }
+  showIndexPath(payload.path);
+  await startIndex(payload.id, payload.name);
+}
+
+async function startIndex(folderId, name) {
+  const response = await fetch(url("/api/index/folders"), {
+    method: "POST",
+    headers: apiHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ folder_id: folderId }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    showIndexStatus(typeof payload.detail === "string" ? payload.detail : t("model_error"));
+    return;
+  }
+  showIndexStatus(fill(t("index_running"), { name: payload.name || name }));
+  pollIndexJob(++indexPoll);
+}
+
+async function pollIndexJob(ticket) {
+  const response = await fetch(url("/api/index/job"), { headers: apiHeaders() });
+  const payload = await response.json().catch(() => ({}));
+  if (ticket !== indexPoll) return;
+  if (payload.running) {
+    showIndexStatus(fill(t("index_running"), { name: payload.name }));
+    window.setTimeout(() => pollIndexJob(ticket), 500);
+    return;
+  }
+  showIndexStatus(payload.message || "");
+}
 
 async function openPicker(folderId) {
   const path = folderId ? `/api/files/${folderId}` : "/api/files";

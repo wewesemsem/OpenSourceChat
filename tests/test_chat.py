@@ -1,5 +1,6 @@
 """Chat routes stream one reply and store the turn."""
 
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,6 +59,66 @@ class ApiTests(unittest.TestCase):
         self.assertEqual([item["content"] for item in detail["messages"]], ["Hi", "Hello there"])
         self.assertEqual(detail["messages"][1]["model"], "gemma3:12b")
         self.assertIsNotNone(detail["messages"][1]["latency_ms"])
+
+    def test_stores_first_token_time_and_speed_separately(self):
+        class FakeAdapter:
+            def __init__(self, model):
+                self.stats = type("Stats", (), {"prompt_tokens": 20, "completion_tokens": 10})()
+
+            async def stream(self, messages):
+                yield "Hello"
+                await asyncio.sleep(0.12)
+                yield " there"
+
+        with patch("app.main.ChatAdapter", FakeAdapter):
+            client = open_client()
+            response = client.post("/api/chat", json={"content": "Hi", "model": "gemma3:4b"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('"ttft_ms":', response.text)
+        self.assertIn('"tokens_per_second":', response.text)
+        detail = client.get("/api/conversations").json()["conversations"]
+        conversation_id = detail[0]["id"]
+        stored = client.get(f"/api/conversations/{conversation_id}").json()["messages"][1]
+        self.assertEqual(stored["model"], "gemma3:4b")
+        self.assertIsNotNone(stored["ttft_ms"])
+        self.assertGreaterEqual(stored["latency_ms"], stored["ttft_ms"])
+        self.assertIsNotNone(stored["tokens_per_second"])
+        self.assertEqual(stored["tokens_in"], 20)
+        self.assertEqual(stored["tokens_out"], 10)
+
+    def test_says_when_the_model_is_still_loading(self):
+        class FakeAdapter:
+            def __init__(self, model):
+                pass
+
+            async def stream(self, messages):
+                yield "Hi"
+
+        async def cold(model):
+            return False
+
+        with (
+            patch("app.main.ChatAdapter", FakeAdapter),
+            patch("app.main.model_is_loaded", cold),
+        ):
+            client = open_client()
+            response = client.post("/api/chat", json={"content": "Hi"})
+        self.assertIn('"status": "loading"', response.text)
+
+    def test_warmup_loads_the_selected_model(self):
+        seen = {}
+
+        async def fake_warm(model):
+            seen["name"] = model.name
+            return True
+
+        with patch("app.main.warm_model", fake_warm):
+            client = open_client()
+            response = client.post("/api/models/warmup", json={"model": "gemma3:4b"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True, "model": "gemma3:4b"})
+        self.assertEqual(seen["name"], "gemma3:4b")
 
     def test_regenerate_replaces_the_assistant_message(self):
         replies = iter(["First", "Second"])
@@ -169,7 +230,10 @@ class ApiTests(unittest.TestCase):
         self.assertIn("Explain a token budget", payload["examples"][0])
         self.assertTrue(payload["files_enabled"])
         self.assertTrue(payload["upload_enabled"])
+        self.assertFalse(payload["index_enabled"])
         self.assertIn("txt", payload["file_extensions"])
+        self.assertFalse(payload["tools_enabled"])
+        self.assertEqual(payload["strings"]["tools_unsupported"], "This model cannot use tools.")
 
     def test_models_use_config_labels(self):
         async def ready(model):
@@ -184,3 +248,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload["models"][1]["name"], "llama3.1:8b")
         self.assertEqual(payload["models"][1]["label"], "Llama 3.1 8B")
         self.assertEqual(payload["models"][1]["status"], "ready")
+        self.assertEqual(payload["models"][2]["name"], "gemma3:4b")
+        self.assertEqual(payload["models"][2]["label"], "Gemma 3 4B (fast)")
+        self.assertTrue(payload["models"][2]["fast"])
+        self.assertFalse(payload["models"][0]["fast"])
+        self.assertTrue(all(item["tools"] == "off" for item in payload["models"]))

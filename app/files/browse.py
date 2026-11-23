@@ -127,6 +127,24 @@ def _search_dir(directory: Path, files: FilesConfig, wanted: str, depth: int) ->
     return None
 
 
+def allowlisted_roots(files: FilesConfig) -> list[Path]:
+    """The configured roots, as real directories. Nested folders are not listed."""
+    roots: list[Path] = []
+    for folder in files.allowed_folders:
+        if not folder.is_dir():
+            continue
+        roots.append(Path(os.path.realpath(folder)))
+    return roots
+
+
+def root_by_id(files: FilesConfig, wanted: str) -> Path | None:
+    """Resolve a server-issued folder id. A client path never matches."""
+    for root in allowlisted_roots(files):
+        if file_id(root) == wanted:
+            return root
+    return None
+
+
 def _parent_id(folder: Path, files: FilesConfig) -> str | None:
     for root in files.allowed_folders:
         root_real = Path(os.path.realpath(root))

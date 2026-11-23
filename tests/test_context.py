@@ -170,3 +170,27 @@ class BuildPromptTests(unittest.TestCase):
     def test_empty_optional_slots_add_no_messages(self):
         built = _prompt([{"role": "user", "content": "Hi"}], notes="  ", retrieved="")
         self.assertEqual([item["role"] for item in built.messages], ["system", "user"])
+
+    def test_drops_old_turns_in_chunks_so_the_prefix_stays(self):
+        """Six equal turns fit. The seventh drops four, and that start stays put."""
+        system = "S"
+        names = [f"{index:04d}" for index in range(11)]
+        room = message_tokens(system) + 6 * message_tokens(names[0])
+
+        def built(count):
+            return build_prompt(
+                [{"role": "user", "content": name} for name in names[:count]],
+                system_prompt=system,
+                context_size=room + 8,
+                reserved_output_tokens=8,
+            )
+
+        self.assertEqual(
+            [item["content"] for item in built(6).messages],
+            [system, *names[:6]],
+        )
+        self.assertFalse(built(6).trimmed)
+        self.assertEqual([item["content"] for item in built(7).messages], [system, *names[4:7]])
+        self.assertEqual([item["content"] for item in built(8).messages][1], names[4])
+        self.assertEqual([item["content"] for item in built(10).messages], [system, *names[4:10]])
+        self.assertEqual([item["content"] for item in built(11).messages], [system, *names[8:11]])
